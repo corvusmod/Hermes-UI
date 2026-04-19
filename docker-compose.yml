@@ -16,7 +16,7 @@ services:
       # All workspaces live under ~/hermes-workspaces on the host.
       # Create subdirectories for new projects — they appear in the UI automatically.
       # Default workspace: ~/hermes-workspaces/default
-      - ~/hermes-workspaces:/opt/data/workspaces
+      - /home/corvus/hermes-workspaces:/opt/data/workspaces
     environment:
       - HERMES_HOME=/opt/data
       # Match your host UID/GID so files created by the agent are owned by you.

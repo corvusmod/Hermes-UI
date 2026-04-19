@@ -1,0 +1,18 @@
+services:
+  hermes:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hermes-ui
+    ports:
+      - "8787:8787"
+      - "8642:8642"
+    volumes:
+      - ./hermes-data:/opt/data
+      - ./hermes-workspaces:/opt/data/workspaces
+    environment:
+      - HERMES_HOME=/opt/data
+      - HERMES_UID=1000
+      - HERMES_GID=1000
+      - TZ=Europe/Madrid
+    restart: unless-stopped
