@@ -152,12 +152,7 @@ Or set it from the Web UI under Settings.
 
 ### File permissions (UID/GID)
 
-The install script automatically detects your host UID/GID so files created by the agent are owned by your user. If you need to set them manually, edit `.env.install`:
-
-```
-UID=1000
-GID=1000
-```
+The install script automatically detects your host UID/GID and writes them to `docker-compose.yml`. If you need to set them manually, edit the `HERMES_UID` and `HERMES_GID` values in `docker-compose.yml`.
 
 On macOS, UIDs typically start at 501.
 
@@ -170,7 +165,6 @@ On macOS, UIDs typically start at 501.
 | `~/.hermes-data/` | All hermes data. Mounted as `/opt/data` in the container. |
 | `~/.hermes-data/.env` | Agent credentials (API keys, tokens). |
 | `~/hermes-workspaces/` | Workspaces root. Subdirectories are workspaces. |
-| `.env.install` | Docker Compose variables (UID, GID, workspaces path). Auto-generated. |
 
 ### Container paths
 
@@ -233,7 +227,7 @@ The Web UI and `hermes setup` both configure the agent. If you ran `hermes setup
 
 ### Permission denied on workspace files
 
-Ensure the UID/GID in `.env.install` match your host user. Run `id -u` and `id -g` on the host and update the values, then restart.
+Ensure `HERMES_UID`/`HERMES_GID` in `docker-compose.yml` match your host user. Run `id -u` and `id -g` on the host, update the values, then restart.
 
 ### Profile has no model configured
 
@@ -256,6 +250,48 @@ docker compose logs --tail 50
 ```
 
 Common causes: malformed `~/.hermes-data/.env` file, permission issues on the data volume.
+
+## Deploying on OpenMediaVault
+
+For OMV with the compose plugin, use relative paths (`./`) instead of home directory paths (`~/`). The data and workspaces will be stored alongside the compose file.
+
+1. Clone the repo into your OMV compose project directory (or copy the files there)
+2. Edit `docker-compose.yml` — change the volume paths:
+
+```yaml
+volumes:
+  - ./hermes-data:/opt/data
+  - ./hermes-workspaces:/opt/data/workspaces
+```
+
+3. Create the workspaces directory:
+
+```bash
+mkdir -p ./hermes-workspaces/default
+```
+
+4. Set `HERMES_UID`/`HERMES_GID` to match your OMV shared folder user:
+
+```bash
+# Check your UID/GID
+id -u && id -g
+```
+
+5. Build and start:
+
+```bash
+docker compose up --build -d
+```
+
+6. Run setup:
+
+```bash
+docker exec -it -u hermes hermes-ui hermes setup
+```
+
+Access the Web UI at `http://your-omv-ip:8787`.
+
+Note: if deploying on ARM (e.g. Raspberry Pi), the build will be slow. Consider building on a faster machine and pushing to a registry.
 
 ## Credits
 
