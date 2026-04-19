@@ -1,0 +1,15 @@
+# Install config (contains UID/GID and workspace path)
+.env.install
+
+# Claude Code
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+hermes-data/
+
+# Stale install artifacts
+hermes-ui/

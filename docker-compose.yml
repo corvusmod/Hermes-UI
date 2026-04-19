@@ -1,0 +1,29 @@
+services:
+  hermes:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hermes-ui
+    env_file: .env.install
+    ports:
+      - "8787:8787"   # Hermes Web UI
+      - "8642:8642"   # Hermes Gateway API
+    volumes:
+      # ── Data ──
+      # All hermes data (config, sessions, memory, skills, credentials).
+      # Editable from the host — e.g. nano ~/.hermes-data/.env
+      - ~/.hermes-data:/opt/data
+      # ── Workspaces ──
+      # All workspaces live under ~/hermes-workspaces on the host.
+      # Create subdirectories for new projects — they appear in the UI automatically.
+      # Default workspace: ~/hermes-workspaces/default
+      - ${HERMES_WORKSPACES:-~/hermes-workspaces}:/opt/data/workspaces
+    environment:
+      - HERMES_HOME=/opt/data
+      # Match your host UID/GID so files created by the agent are owned by you.
+      # The install script sets these automatically in .env.install
+      - HERMES_UID=${UID:-1000}
+      - HERMES_GID=${GID:-1000}
+      # Optional: protect the web UI with a password
+      # - HERMES_WEBUI_PASSWORD=your-secret-password
+    restart: unless-stopped
