@@ -108,11 +108,9 @@ if [ -d "$AGENT_DIR/skills" ]; then
     gosu hermes python3 "$AGENT_DIR/tools/skills_sync.py" 2>/dev/null || true
 fi
 
-# In K8s there's no Docker daemon, so use "local" mode
-if [ -n "$KUBERNETES_SERVICE_HOST" ]; then
-    echo "local" > "$HERMES_HOME/.container-mode" 2>/dev/null || true
-else
-    echo "docker" > "$HERMES_HOME/.container-mode" 2>/dev/null || true
+# In K8s there's no Docker daemon, so no file is needed.
+if [ -z "$KUBERNETES_SERVICE_HOST" ]; then
+    echo "docker" > "$HERMES_HOME/.container-mode"
 fi
 
 # ── Load hermes .env ──
