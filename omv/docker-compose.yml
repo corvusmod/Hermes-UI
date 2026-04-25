@@ -15,4 +15,27 @@ services:
       - HERMES_UID=1000
       - HERMES_GID=1000
       - TZ=Europe/Madrid
+      # Route Hermes browser tools (browser_navigate, browser_click, ...) through
+      # the camofox sidecar. Reachable on the internal compose network.
+      - CAMOFOX_URL=http://camofox:9377
+    depends_on:
+      - camofox
+    restart: unless-stopped
+
+  camofox:
+    image: ghcr.io/corvusmod/camofox-browser:latest
+    container_name: camofox
+    # Port 9377 is intentionally NOT exposed to the host: camofox has no auth
+    # on its browsing endpoints by default, so we keep it network-internal and
+    # let only the hermes service reach it. Uncomment to expose for debugging.
+    # ports:
+    #   - "9377:9377"
+    environment:
+      # Persist cookies + per-user Firefox profiles to the bind mount so that
+      # logins and `managed_persistence` browser sessions survive redeploys.
+      - CAMOFOX_COOKIES_DIR=/data/cookies
+      - CAMOFOX_PROFILE_DIR=/data/profiles
+      - TZ=Europe/Madrid
+    volumes:
+      - ./camofox-data:/data
     restart: unless-stopped

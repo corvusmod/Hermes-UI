@@ -98,6 +98,24 @@ YAML
     chown hermes:hermes "$HERMES_HOME/config.yaml" 2>/dev/null || true
 fi
 
+# ── Default memory provider: holographic ──
+# Local SQLite + FTS5 + HRR fact store. The DB at $HERMES_HOME/memory_store.db
+# is on the bind-mounted volume, so it persists across redeploys and rebuilds.
+# Run unconditionally — fact data is never deleted; this only re-asserts the
+# active provider in config.yaml each start.
+gosu hermes env HERMES_HOME="$HERMES_HOME" \
+    /opt/hermes/.venv/bin/hermes config set memory.provider holographic \
+    >/dev/null 2>&1 || echo "[entrypoint] Warning: failed to set memory.provider"
+
+# ── Camofox: enable managed_persistence ──
+# Hermes sends a deterministic userId so the camofox sidecar reuses the same
+# Firefox profile across sessions (cookies + logins survive). Without this,
+# every browser task gets a random identity and the per-profile data on the
+# camofox-data volume would never be reused.
+gosu hermes env HERMES_HOME="$HERMES_HOME" \
+    /opt/hermes/.venv/bin/hermes config set browser.camofox.managed_persistence true \
+    >/dev/null 2>&1 || echo "[entrypoint] Warning: failed to set browser.camofox.managed_persistence"
+
 # ── Symlink hermes to ~/.local/bin ──
 mkdir -p "$HERMES_HOME/.local/bin"
 ln -sf "$AGENT_DIR/.venv/bin/hermes" "$HERMES_HOME/.local/bin/hermes"

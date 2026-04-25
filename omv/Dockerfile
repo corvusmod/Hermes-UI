@@ -18,6 +18,14 @@ RUN git clone --depth 1 --branch ${WEBUI_BRANCH} ${WEBUI_REPO} ${WEBUI_INSTALL}
 RUN . /opt/hermes/.venv/bin/activate && \
     uv pip install --no-cache-dir -r ${WEBUI_INSTALL}/requirements.txt
 
+# Holographic memory provider: NumPy is optional in upstream but required for
+# HRR algebra (probe, reason). Pre-install so the provider is fully functional
+# the moment a user runs `hermes memory setup` and selects "holographic".
+# The SQLite db lives at $HERMES_HOME/memory_store.db, which is on the
+# bind-mounted /opt/data volume, so it persists across redeploys.
+RUN . /opt/hermes/.venv/bin/activate && \
+    uv pip install --no-cache-dir numpy
+
 # Container marker (webui checks for this)
 RUN touch /.within_container
 

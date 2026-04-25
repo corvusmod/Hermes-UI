@@ -32,27 +32,23 @@ After installation, open **http://localhost:8787** in your browser.
 ## Architecture
 
 ```
-                Single Container
- +-----------------------------------------+
- |  supervisord                             |
- |  +----------------+  +----------------+ |
- |  | Hermes Web UI  |  | Hermes Gateway | |
- |  | (Python)       |  | (Python)       | |
- |  | port 8787      |  | port 8642      | |
- |  +-------+--------+  +--------+-------+ |
- |          |                     |         |
- |     imports agent          CLI/API       |
- |     in-process             messaging     |
- |          |                     |         |
- |     /opt/hermes-agent (shared venv)      |
- |     /opt/data (HERMES_HOME, volume)      |
- +-----------------------------------------+
-        |                    |
-   host:8787            host:8642
+   +-----------------------------------------+      +---------------------+
+   |          hermes-ui container            |      |  camofox container  |
+   |  supervisord                             |      |  Camoufox (Firefox) |
+   |  +----------------+  +----------------+ |      |  + REST API         |
+   |  | Hermes Web UI  |  | Hermes Gateway | |      |  port 9377          |
+   |  | port 8787      |  | port 8642      | |◄────►|  (network-internal) |
+   |  +----------------+  +----------------+ |      +---------------------+
+   |  /opt/hermes-agent (shared venv)         |              |
+   |  /opt/data (HERMES_HOME, volume)         |              |
+   +-----------------------------------------+              |
+            |                    |                          |
+       host:8787            host:8642               ~/.camofox-data
 ```
 
 - **Web UI** (port 8787): Browser interface for chatting, managing skills, memory, cron jobs, workspaces, and profiles.
 - **Gateway** (port 8642): Hermes messaging API for external integrations (Telegram, Discord, etc.).
+- **Camofox sidecar** (port 9377, internal): anti-detection browser the Hermes browser tools route through automatically (`CAMOFOX_URL=http://camofox:9377`). Image: `ghcr.io/corvusmod/camofox-browser:latest`.
 
 ## Workspaces
 
@@ -139,6 +135,34 @@ GOOGLE_API_KEY=...
 
 All three methods write to the same file. Changes take effect immediately — no container restart needed.
 
+### Holographic memory provider
+
+The `holographic` memory provider (local SQLite + FTS5 + HRR) is **enabled by default for the default profile**. The entrypoint runs `hermes config set memory.provider holographic` on every start, and `numpy` is pre-installed in the agent venv at build time so the algebraic features (`probe`, `reason`, `contradict`) work out of the box.
+
+The fact store lives at `~/.hermes-data/memory_store.db` (i.e. `$HERMES_HOME/memory_store.db` inside the container). It is on the bind-mounted volume, so it survives `docker compose down/up --build` and image rebuilds.
+
+Profiles get their own isolated fact stores. To enable holographic on a non-default profile manually:
+
+```bash
+docker exec -it -u hermes hermes-ui hermes -p <name> config set memory.provider holographic
+```
+
+### Camofox anti-detection browser
+
+A `camofox` sidecar runs alongside Hermes (`ghcr.io/corvusmod/camofox-browser:latest`). The Hermes browser tools (`browser_navigate`, `browser_snapshot`, `browser_click`, etc.) automatically route through it because the compose file sets `CAMOFOX_URL=http://camofox:9377` on the hermes service.
+
+**Persistence**: cookies and per-Hermes-profile Firefox profiles live at `~/.camofox-data/`, bind-mounted into the camofox container at `/data`. Logins and browsing state survive `docker compose down/up --build` and image bumps.
+
+**Stable user identity**: the entrypoint sets `browser.camofox.managed_persistence: true` on the default profile on every start. For non-default profiles, run it manually:
+
+```bash
+docker exec -it -u hermes hermes-ui hermes -p <name> config set browser.camofox.managed_persistence true
+```
+
+**Importing cookies** (optional, for sites where you'd rather not log in interactively): export Netscape-format cookie files from your browser, place them at `~/.camofox-data/cookies/<site>.txt`, then ask the agent to import them. To enable, add `CAMOFOX_API_KEY` to the `camofox` service `environment:` block in `docker-compose.yml` (any random hex string) — without it, the cookie-import endpoint returns 403.
+
+**Network**: port 9377 is intentionally not exposed to the host. The camofox API has no auth on its browsing endpoints by default, so we keep it network-internal and only the hermes service can reach it. To debug from the host, uncomment the `ports:` block under the `camofox` service in `docker-compose.yml`.
+
 ### Web UI password
 
 To protect the Web UI with a password, add to `docker-compose.yml`:
@@ -164,7 +188,10 @@ On macOS, UIDs typically start at 501.
 |------|---------|
 | `~/.hermes-data/` | All hermes data. Mounted as `/opt/data` in the container. |
 | `~/.hermes-data/.env` | Agent credentials (API keys, tokens). |
+| `~/.hermes-data/memory_store.db` | Holographic memory fact store (default profile). |
 | `~/hermes-workspaces/` | Workspaces root. Subdirectories are workspaces. |
+| `~/.camofox-data/cookies/` | Camofox cookie imports (Netscape format, optional). |
+| `~/.camofox-data/profiles/` | Persistent Firefox profiles per Hermes profile. |
 
 ### Container paths
 
@@ -179,16 +206,22 @@ On macOS, UIDs typically start at 501.
 
 ## Data Persistence
 
-All agent data lives at `~/.hermes-data/` on the host, mounted as `/opt/data` in the container. This persists across container restarts and rebuilds.
+| Host path | Survives `docker compose down/up --build` |
+|---|---|
+| `~/.hermes-data/` | ✓ — config, sessions, skills, holographic DB, profiles |
+| `~/hermes-workspaces/` | ✓ — your project files |
+| `~/.camofox-data/` | ✓ — browser cookies + per-profile Firefox profiles |
 
-To start completely fresh (removes all agent data but keeps workspaces):
+To start completely fresh (removes all agent + browser state, keeps workspaces):
 
 ```bash
 docker compose down
-rm -rf ~/.hermes-data
+rm -rf ~/.hermes-data ~/.camofox-data
 ```
 
 ## Useful Commands
+
+`install.sh` drops a `hermes-container` wrapper at `~/.local/bin/hermes-container` that runs the `hermes` CLI inside the running container as the `hermes` user (so file ownership on bind-mounted volumes stays correct). It accepts the same arguments as the `hermes` CLI.
 
 ```bash
 # View logs
@@ -201,15 +234,28 @@ docker compose restart
 docker compose down
 
 # Reconfigure provider/model
-docker exec -it -u hermes hermes-ui hermes setup
+hermes-container setup
 
 # Run hermes CLI commands
-docker exec -it -u hermes hermes-ui hermes status
-docker exec -it -u hermes hermes-ui hermes model
-docker exec -it -u hermes hermes-ui hermes doctor
+hermes-container status
+hermes-container model
+hermes-container doctor
+
+# Per-profile commands
+hermes-container -p alice config show
+hermes-container -p alice skills install official/security/1password
+
+# Override the container name (default: hermes-ui)
+HERMES_CONTAINER=my-hermes hermes-container status
 
 # Open a shell inside the container
 docker exec -it -u hermes hermes-ui bash
+```
+
+If `~/.local/bin` isn't on your PATH (common on macOS), add it to your shell rc file:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
 ## Ports
@@ -218,6 +264,7 @@ docker exec -it -u hermes hermes-ui bash
 |------|---------|-------------|
 | 8787 | Web UI | Browser interface |
 | 8642 | Gateway API | OpenAI-compatible API for external integrations |
+| 9377 | Camofox | Browser API — **internal only**, not exposed to host |
 
 ## Troubleshooting
 

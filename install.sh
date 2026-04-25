@@ -155,14 +155,46 @@ echo ""
 
 # ── 1) Workspaces ──
 printf "${BOLD}Step 1: Workspaces${NC}\n"
-WORKSPACES_ROOT="${HERMES_WORKSPACES:-$HOME/hermes-workspaces}"
 
-# Resolve to absolute path
+# Resolve the suggested default. Precedence:
+#   1. --workspaces / -w flag (sets HERMES_WORKSPACES at the top)
+#   2. Currently-bound path in docker-compose.yml (so re-runs default to the
+#      last choice, even if the file was edited by hand)
+#   3. ~/hermes-workspaces
+DEFAULT_WS=""
+if [ -n "$HERMES_WORKSPACES" ]; then
+    DEFAULT_WS="$HERMES_WORKSPACES"
+else
+    CURRENT_WS=$(grep -oE '[^[:space:]]+:/opt/data/workspaces' "$SCRIPT_DIR/docker-compose.yml" 2>/dev/null \
+        | head -1 | sed 's|:/opt/data/workspaces$||')
+    if [ -n "$CURRENT_WS" ] && [ "$CURRENT_WS" != "~/hermes-workspaces" ]; then
+        DEFAULT_WS="$CURRENT_WS"
+    else
+        DEFAULT_WS="$HOME/hermes-workspaces"
+    fi
+fi
+
+# Tilde-expand the default so it shows fully resolved in the prompt
+case "$DEFAULT_WS" in
+    ~*) DEFAULT_WS="${HOME}${DEFAULT_WS#\~}" ;;
+esac
+
+# Prompt every run. In non-interactive shells (CI, piped input), accept the
+# default silently — keeps `curl ... | bash` style installs working.
+if [ -t 0 ]; then
+    printf "  Workspaces root [${BOLD}%s${NC}]: " "$DEFAULT_WS"
+    read -r answer
+    WORKSPACES_ROOT="${answer:-$DEFAULT_WS}"
+else
+    info "Non-interactive shell — using default workspace path"
+    WORKSPACES_ROOT="$DEFAULT_WS"
+fi
+
+# Tilde-expand whatever the user typed
 case "$WORKSPACES_ROOT" in
     ~*) WORKSPACES_ROOT="${HOME}${WORKSPACES_ROOT#\~}" ;;
 esac
 
-info "Workspaces root: $WORKSPACES_ROOT"
 info "All workspaces live here. Create subdirectories for new projects."
 mkdir -p "$WORKSPACES_ROOT/default" || fatal "Cannot create workspaces directory"
 ok "Workspaces root: $WORKSPACES_ROOT"
@@ -206,6 +238,11 @@ mkdir -p "$HERMES_DATA"
 if [ "$EXISTING_DATA" = true ]; then
     ok "Using existing data: $HERMES_DATA"
 fi
+
+# Camofox sidecar persistence (cookies + per-Hermes-profile Firefox profiles)
+CAMOFOX_DATA="$HOME/.camofox-data"
+mkdir -p "$CAMOFOX_DATA"
+ok "Camofox data: $CAMOFOX_DATA"
 echo ""
 
 # ── 3) Configure docker-compose.yml ──
@@ -216,15 +253,18 @@ if [ "$PLATFORM" = "mac" ] && [ "$HOST_UID" -lt 1000 ]; then
     info "macOS UID ${HOST_UID} detected — this is normal"
 fi
 
-# Update UID/GID and workspaces path in docker-compose.yml
-sed -i.bak \
+# Update UID/GID and workspaces path in docker-compose.yml.
+# The workspaces regex is anchored on `:/opt/data/workspaces` so it works on
+# both the upstream form (`~/hermes-workspaces:/opt/data/workspaces`) and on
+# any previously-substituted absolute path — making re-runs idempotent.
+sed -i.bak -E \
     -e "s|HERMES_UID=.*|HERMES_UID=${HOST_UID}|" \
     -e "s|HERMES_GID=.*|HERMES_GID=${HOST_GID}|" \
-    -e "s|~/hermes-workspaces:|${WORKSPACES_ROOT}:|" \
+    -e "s|^([[:space:]]*-[[:space:]]+).+:/opt/data/workspaces$|\1${WORKSPACES_ROOT}:/opt/data/workspaces|" \
     "$SCRIPT_DIR/docker-compose.yml"
 rm -f "$SCRIPT_DIR/docker-compose.yml.bak"
 
-ok "Configured docker-compose.yml (UID=${HOST_UID}, GID=${HOST_GID})"
+ok "Configured docker-compose.yml (UID=${HOST_UID}, GID=${HOST_GID}, workspaces=${WORKSPACES_ROOT})"
 
 # ── 4) Build + Start ──
 printf "${BOLD}Step 3: Building and starting${NC}\n"
@@ -294,21 +334,70 @@ if [ "$RUN_SETUP" = true ]; then
     docker exec hermes-ui supervisorctl restart hermes-gateway 2>/dev/null || true
 fi
 
+# ── 6) Install hermes-container wrapper ──
+# Lets the user run hermes CLI commands without typing the full
+# `docker exec -it -u hermes hermes-ui hermes ...` prefix every time.
+# Always runs as the `hermes` user inside the container so file ownership
+# on bind-mounted volumes stays correct.
+LOCAL_BIN="$HOME/.local/bin"
+WRAPPER="$LOCAL_BIN/hermes-container"
+mkdir -p "$LOCAL_BIN"
+cat > "$WRAPPER" <<'WRAPPER_EOF'
+#!/usr/bin/env bash
+# hermes-container — run the hermes CLI inside the running hermes-ui
+# container as the `hermes` user.
+#
+# Usage:
+#   hermes-container [args...]              # → hermes [args...]
+#   hermes-container -p alice config show   # per-profile commands
+#   hermes-container skills install <id>
+#
+# Override the container name with HERMES_CONTAINER=<name> (default: hermes-ui).
+set -e
+CONTAINER="${HERMES_CONTAINER:-hermes-ui}"
+if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
+    echo "Error: container '$CONTAINER' is not running." >&2
+    echo "Start it with: docker compose up -d (in the hermes-ui project dir)" >&2
+    exit 1
+fi
+# -t requires a TTY on both ends; drop it for piped input/output so scripts
+# (e.g. `echo foo | hermes-container chat`) keep working.
+DOCKER_FLAGS="-i"
+[ -t 0 ] && [ -t 1 ] && DOCKER_FLAGS="-it"
+exec docker exec $DOCKER_FLAGS -u hermes "$CONTAINER" hermes "$@"
+WRAPPER_EOF
+chmod +x "$WRAPPER"
+ok "Installed hermes-container wrapper at $WRAPPER"
+
+# Warn if ~/.local/bin isn't on PATH (common on macOS, default on most Linux)
+case ":$PATH:" in
+    *":$LOCAL_BIN:"*) : ;;
+    *)
+        warn "$LOCAL_BIN is not on your PATH."
+        case "$PLATFORM" in
+            mac)   info "Add it to ~/.zshrc: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
+            *)     info "Add it to ~/.bashrc: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
+        esac
+        ;;
+esac
+
 # ── Done ──
 echo ""
 printf "${BOLD}════════════════════════════════════════${NC}\n"
 printf "${GREEN}${BOLD}  Installation complete!${NC}\n"
 printf "${BOLD}════════════════════════════════════════${NC}\n"
 echo ""
-printf "  Web UI:    ${CYAN}http://localhost:8787${NC}\n"
-printf "  Gateway:   ${CYAN}http://localhost:8642${NC}\n"
-printf "  Workspaces: ${CYAN}%s${NC}\n" "$WORKSPACES_ROOT"
-printf "  Data:      ${CYAN}%s${NC}\n" "$HERMES_DATA"
+printf "  Web UI:      ${CYAN}http://localhost:8787${NC}\n"
+printf "  Gateway:     ${CYAN}http://localhost:8642${NC}\n"
+printf "  Workspaces:  ${CYAN}%s${NC}\n" "$WORKSPACES_ROOT"
+printf "  Data:        ${CYAN}%s${NC}\n" "$HERMES_DATA"
+printf "  Camofox:     ${CYAN}%s${NC}\n" "$CAMOFOX_DATA"
 echo ""
 printf "  Useful commands:\n"
 printf "    ${BOLD}cd %s${NC}\n" "$SCRIPT_DIR"
 printf "    ${BOLD}%s logs -f${NC}              # view logs\n" "$COMPOSE"
 printf "    ${BOLD}%s restart${NC}              # restart\n" "$COMPOSE"
 printf "    ${BOLD}%s down${NC}                 # stop\n" "$COMPOSE"
-printf "    ${BOLD}docker exec -it -u hermes hermes-ui hermes setup${NC}  # reconfigure\n"
+printf "    ${BOLD}hermes-container setup${NC}                # reconfigure provider/model\n"
+printf "    ${BOLD}hermes-container -p alice skills list${NC}  # per-profile commands\n"
 echo ""

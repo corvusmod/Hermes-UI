@@ -16,7 +16,7 @@ services:
       # All workspaces live under ~/hermes-workspaces on the host.
       # Create subdirectories for new projects — they appear in the UI automatically.
       # Default workspace: ~/hermes-workspaces/default
-      - /home/corvus/hermes-workspaces:/opt/data/workspaces
+      - /home/corvus/Escritorio:/opt/data/workspaces
     environment:
       - HERMES_HOME=/opt/data
       # Match your host UID/GID so files created by the agent are owned by you.
@@ -25,4 +25,24 @@ services:
       - HERMES_GID=1000
       # Optional: protect the web UI with a password
       # - HERMES_WEBUI_PASSWORD=your-secret-password
+      # Route Hermes browser tools through the camofox sidecar (internal network).
+      - CAMOFOX_URL=http://camofox:9377
+    depends_on:
+      - camofox
+    restart: unless-stopped
+
+  camofox:
+    image: ghcr.io/corvusmod/camofox-browser:latest
+    container_name: camofox
+    # Port 9377 is intentionally NOT exposed to the host: camofox has no auth
+    # on its browsing endpoints by default. Uncomment to expose for debugging.
+    # ports:
+    #   - "9377:9377"
+    environment:
+      # Persist cookies + per-Hermes-profile Firefox profiles to the bind mount
+      # so logins and `managed_persistence` browser sessions survive redeploys.
+      - CAMOFOX_COOKIES_DIR=/data/cookies
+      - CAMOFOX_PROFILE_DIR=/data/profiles
+    volumes:
+      - ~/.camofox-data:/data
     restart: unless-stopped

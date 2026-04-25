@@ -2,13 +2,18 @@
 
 Deploy Hermes Agent with Web UI on OpenMediaVault using the Docker Compose plugin.
 
+The stack includes:
+
+- **`hermes`** — the Hermes Agent + Web UI container (built locally from `Dockerfile`)
+- **`camofox`** — anti-detection browser sidecar (Camoufox / Firefox with C++ fingerprint spoofing). Pulled from `ghcr.io/corvusmod/camofox-browser:latest`. The Hermes browser tools are auto-routed through it via the `CAMOFOX_URL` env var.
+
 ## Files
 
 Copy all files from this folder to your OMV compose project directory:
 
-- `Dockerfile` — builds the container image (agent + web UI)
-- `docker-compose.yml` — service definition
-- `entrypoint.sh` — container startup script
+- `Dockerfile` — builds the Hermes container image (agent + web UI)
+- `docker-compose.yml` — services definition (hermes + camofox)
+- `entrypoint.sh` — Hermes container startup script
 - `supervisord.conf` — process manager config
 
 ## Installation
@@ -103,6 +108,26 @@ Then restart: `docker compose restart`
 
 When creating a new profile in the Web UI, enable **"Clone config from default"** so it inherits your provider, model, and API keys.
 
+### Camofox anti-detection browser
+
+A `camofox` sidecar runs alongside Hermes (`ghcr.io/corvusmod/camofox-browser:latest`). The Hermes browser tools (`browser_navigate`, `browser_snapshot`, `browser_click`, etc.) automatically route through it because the entrypoint sets `CAMOFOX_URL=http://camofox:9377` on the hermes service.
+
+**Persistence**: cookies and per-Hermes-profile Firefox profiles live at `./camofox-data/`, bind-mounted into the camofox container at `/data`. Logins and browsing state survive `docker compose down/up --build` and image bumps.
+
+**Stable user identity**: the entrypoint sets `browser.camofox.managed_persistence: true` in `config.yaml` on every start. Without this, Hermes would send a random `userId` for every browser task and the per-profile data on `./camofox-data/profiles/` would never be reused.
+
+**Importing cookies** (optional, for sites where you'd rather not log in interactively): export Netscape-format cookie files from your browser, place them at `./camofox-data/cookies/<site>.txt`, then ask the agent to import them. To enable this, add `CAMOFOX_API_KEY` to the `camofox` service `environment:` block (any random hex string) — without it, the cookie-import endpoint returns 403.
+
+**Network**: port `9377` is intentionally not exposed to the host. The camofox API has no auth on its browsing endpoints by default, so we keep it network-internal and only the hermes service can reach it. To debug from the host, uncomment the `ports:` block under the `camofox` service in `docker-compose.yml`.
+
+### Holographic memory provider
+
+The `holographic` memory provider (local SQLite + FTS5 + HRR) is **enabled by default**. The entrypoint runs `hermes config set memory.provider holographic` on every start, and `numpy` is pre-installed in the agent venv at build time so the algebraic features (`probe`, `reason`, `contradict`) work out of the box.
+
+The fact store lives at `./hermes-data/memory_store.db` (i.e. `$HERMES_HOME/memory_store.db` inside the container). It is on the bind-mounted volume, so it survives `docker compose down/up --build` and image rebuilds. Nothing extra to back up — keeping `./hermes-data/` is enough.
+
+To switch to a different provider (or disable external memory), use `hermes memory setup` / `hermes memory off`. **Note:** the entrypoint re-asserts `holographic` on every start, so a manual override won't stick across restarts unless you also remove the `hermes config set` line from `entrypoint.sh`.
+
 ## Ports
 
 | Port | Service |
@@ -128,7 +153,10 @@ All data is stored in `./hermes-data/` alongside the compose file:
 | `./hermes-data/sessions/` | Chat sessions |
 | `./hermes-data/memories/` | Agent memory |
 | `./hermes-data/profiles/` | Additional profiles |
+| `./hermes-data/memory_store.db` | Holographic memory fact store |
 | `./hermes-workspaces/` | Project files |
+| `./camofox-data/cookies/` | Camofox cookie imports (Netscape format, optional) |
+| `./camofox-data/profiles/` | Persistent Firefox profiles per Hermes profile (logins survive redeploys) |
 
 ## Important: always use `-u hermes`
 
