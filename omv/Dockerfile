@@ -5,18 +5,23 @@ ARG WEBUI_BRANCH=master
 
 USER root
 
-# Supervisor for running webui + gateway side by side
+# Supervisor for running webui + gateway side by side.
+# git + gosu are required by the entrypoint (clone/pull webui, drop privileges).
+# They live in the base image today, but pinning them here keeps the build
+# resilient to base-image changes.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends supervisor openssl && \
+    apt-get install -y --no-install-recommends supervisor openssl git gosu && \
     rm -rf /var/lib/apt/lists/*
 
 # ── Hermes Web UI ──
+# We do NOT clone or install requirements at build time. Doing it at build
+# time has bitten us when uv/base-image versions changed and the deps ended
+# up outside the agent venv, leaving `python server.py` unable to import yaml
+# and crashing 50ms after spawn with no visible traceback. The entrypoint
+# clones (or pulls) into this dir on every start and runs `pip install -r
+# requirements.txt` against the activated venv — that path is known-good.
 ENV WEBUI_INSTALL=/opt/hermes-webui
-RUN git clone --depth 1 --branch ${WEBUI_BRANCH} ${WEBUI_REPO} ${WEBUI_INSTALL}
-
-# Install webui's deps into the agent venv
-RUN . /opt/hermes/.venv/bin/activate && \
-    uv pip install --no-cache-dir -r ${WEBUI_INSTALL}/requirements.txt
+RUN mkdir -p ${WEBUI_INSTALL} && chown hermes:hermes ${WEBUI_INSTALL}
 
 # Holographic memory provider: NumPy is optional in upstream but required for
 # HRR algebra (probe, reason). Pre-install so the provider is fully functional

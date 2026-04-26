@@ -3,6 +3,8 @@ set -e
 
 HERMES_HOME="${HERMES_HOME:-/opt/data}"
 AGENT_DIR="/opt/hermes"
+WEBUI_INSTALL="${WEBUI_INSTALL:-/opt/hermes-webui}"
+WEBUI_REPO="${WEBUI_REPO:-https://github.com/nesquena/hermes-webui.git}"
 
 # ── Privilege dropping: remap hermes UID/GID if requested ──
 if [ "$(id -u)" = "0" ]; then
@@ -23,8 +25,35 @@ if [ "$(id -u)" = "0" ]; then
     fi
 fi
 
+# ── Hermes Web UI: clone or pull at runtime ──
+# Doing this here (not at build time) keeps deps installed against the
+# *currently activated* agent venv — avoids silent breakage when base-image
+# uv versions change install targets. /opt/hermes-webui is created in the
+# Dockerfile owned by hermes so the clone/pull works without root.
+#
+# Re-chown after any UID remap above: the Dockerfile chowned this dir to the
+# base image's hermes UID, but if HERMES_UID changed it the dir is now owned
+# by an orphan UID and gosu git clone hits "Permission denied".
+chown -R hermes:hermes "$WEBUI_INSTALL" 2>/dev/null || true
+git config --global --add safe.directory "$WEBUI_INSTALL"
+
+if [ ! -d "$WEBUI_INSTALL/.git" ]; then
+    echo "[entrypoint] Cloning Hermes Web UI..."
+    gosu hermes git clone --depth 1 "$WEBUI_REPO" "$WEBUI_INSTALL"
+else
+    echo "[entrypoint] Updating Hermes Web UI..."
+    gosu hermes git -C "$WEBUI_INSTALL" pull --quiet || \
+        echo "[entrypoint] Warning: git pull failed — continuing with existing checkout"
+fi
+
 # Activate agent venv
 source "$AGENT_DIR/.venv/bin/activate"
+
+# Install/refresh Web UI dependencies into the agent venv. uv pip respects
+# the activated VIRTUAL_ENV from the source above, so this lands in the
+# agent venv. Idempotent: uv skips already-satisfied requirements.
+echo "[entrypoint] Syncing Web UI dependencies..."
+uv pip install --no-cache-dir -r "$WEBUI_INSTALL/requirements.txt"
 
 # ── Bootstrap HERMES_HOME ──
 if [ ! -f "$HERMES_HOME/config.yaml" ]; then
@@ -129,6 +158,16 @@ fi
 # Container mode marker
 echo "docker" > "$HERMES_HOME/.container-mode" 2>/dev/null || true
 
+# ── Clear stale gateway lock files ──
+# The bind-mounted /opt/data persists across `docker compose down/up`, so a
+# previous container's gateway.pid can survive into a fresh container. PIDs
+# in containers start low (supervisor=1, children at ~49+), so the stale PID
+# often collides with a live process in the new container — gateway then
+# refuses to start with "Gateway already running" and supervisor loops it
+# until FATAL. Clearing on every start is safe: the gateway re-creates these
+# itself, and we have not started supervisord yet.
+rm -f "$HERMES_HOME/gateway.pid" "$HERMES_HOME/gateway.lock" 2>/dev/null || true
+
 # ── Load hermes .env ──
 if [ -f "$HERMES_HOME/.env" ]; then
     set -a
@@ -137,7 +176,8 @@ if [ -f "$HERMES_HOME/.env" ]; then
 fi
 
 # Ensure dirs and fix permissions (covers files modified by docker exec as root)
-mkdir -p "$HERMES_HOME/webui" "$HERMES_HOME/workspaces/default" /var/log/supervisor
+mkdir -p "$HERMES_HOME/webui" "$HERMES_HOME/workspaces/default" "$HERMES_HOME/logs" /var/log/supervisor
+chown -R hermes:hermes "$HERMES_HOME/logs" 2>/dev/null || true
 
 # Create AGENTS.md in default workspace if missing
 if [ ! -f "$HERMES_HOME/workspaces/default/AGENTS.md" ]; then

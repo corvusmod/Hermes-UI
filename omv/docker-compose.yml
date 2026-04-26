@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      pull: true
     container_name: hermes-ui
     ports:
       - "8787:8787"
@@ -25,6 +26,7 @@ services:
   camofox:
     image: ghcr.io/corvusmod/camofox-browser:latest
     container_name: camofox
+    pull_policy: always
     # Port 9377 is intentionally NOT exposed to the host: camofox has no auth
     # on its browsing endpoints by default, so we keep it network-internal and
     # let only the hermes service reach it. Uncomment to expose for debugging.

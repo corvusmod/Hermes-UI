@@ -201,7 +201,8 @@ docker exec hermes-ui chown -R hermes:hermes /opt/data
 
 ```bash
 docker compose down
-docker compose build --no-cache
+docker compose build --no-cache --pull
+docker compose pull
 docker compose up -d
 ```
 
