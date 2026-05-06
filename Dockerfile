@@ -34,6 +34,11 @@ COPY entrypoint.sh /entrypoint.sh
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 RUN chmod +x /entrypoint.sh
 
+# ── Fix ownership ──
+# All installs above ran as root. Hand /opt/hermes back to hermes so runtime
+# operations (TUI build, esbuild, venv writes) work without permission errors.
+RUN chown -R hermes:hermes /opt/hermes /opt/hermes-webui /var/log/supervisor /var/run
+
 ENV PATH="/opt/hermes/.venv/bin:${PATH}"
 
 # WebUI (8787) + Gateway API (8642)
