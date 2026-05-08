@@ -11,8 +11,25 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends supervisor openssl && \
     rm -rf /var/lib/apt/lists/*
 
-# ── Hermes Web UI ──
+# Container marker (webui checks for this)
+RUN touch /.within_container
+
+# ── Configuration ──
+COPY entrypoint.sh /entrypoint.sh
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+RUN chmod +x /entrypoint.sh
+
+# ── Prepare directories for hermes user ──
+# Only chown the specific (empty/small) dirs that need it — avoids the
+# expensive recursive chown over the entire venv + webui source tree.
 ENV WEBUI_INSTALL=/opt/hermes-webui
+RUN mkdir -p ${WEBUI_INSTALL} && \
+    chown hermes:hermes ${WEBUI_INSTALL} /var/log/supervisor /var/run
+
+# ── Switch to hermes for all heavy I/O (clone + pip install) ──
+USER hermes
+
+# ── Hermes Web UI ──
 RUN git clone --depth 1 --branch ${WEBUI_BRANCH} ${WEBUI_REPO} ${WEBUI_INSTALL}
 
 # Install webui's deps into the agent venv
@@ -27,18 +44,8 @@ RUN . /opt/hermes/.venv/bin/activate && \
 RUN . /opt/hermes/.venv/bin/activate && \
     uv pip install --no-cache-dir numpy
 
-# Container marker (webui checks for this)
-RUN touch /.within_container
-
-# ── Configuration ──
-COPY entrypoint.sh /entrypoint.sh
-COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
-RUN chmod +x /entrypoint.sh
-
-# ── Fix ownership ──
-# All installs above ran as root. Hand /opt/hermes back to hermes so runtime
-# operations (TUI build, esbuild, venv writes) work without permission errors.
-RUN chown -R hermes:hermes /opt/hermes /opt/hermes-webui /var/log/supervisor /var/run
+# ── Back to root for supervisord ──
+USER root
 
 ENV PATH="/opt/hermes/.venv/bin:${PATH}"
 
