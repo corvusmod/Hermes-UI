@@ -3,10 +3,15 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        - AGENT_TAG=${AGENT_TAG:-latest}
+        - WEBUI_BRANCH=${WEBUI_BRANCH:-master}
     container_name: hermes-ui
+    network_mode: host
     ports:
       - "8787:8787"   # Hermes Web UI
       - "8642:8642"   # Hermes Gateway API
+      - "8085:8085"   # Gemini Oauth port
     volumes:
       # ── Data ──
       # All hermes data (config, sessions, memory, skills, credentials).
@@ -27,6 +32,7 @@ services:
       # - HERMES_WEBUI_PASSWORD=your-secret-password
       # Route Hermes browser tools through the camofox sidecar (internal network).
       - CAMOFOX_URL=http://camofox:9377
+      - HERMES_HEADLESS=1
     depends_on:
       - camofox
     restart: unless-stopped

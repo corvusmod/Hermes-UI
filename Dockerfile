@@ -1,4 +1,5 @@
-FROM nousresearch/hermes-agent:latest
+ARG AGENT_TAG=latest
+FROM nousresearch/hermes-agent:${AGENT_TAG}
 
 ARG WEBUI_REPO=https://github.com/nesquena/hermes-webui.git
 ARG WEBUI_BRANCH=master

@@ -17,9 +17,10 @@ The install script will:
 1. Check that Docker, Docker Compose, and Git are installed
 2. Create `~/hermes-workspaces/default/` for your files
 3. Create `~/.hermes-data/` for agent data and credentials
-4. Build the Docker image
-5. Start the container
-6. Run `hermes setup` to configure your AI provider and API keys
+4. Resolve the latest released versions of Hermes Agent and Web UI from GitHub
+5. Build the Docker image pinned to those versions
+6. Start the container
+7. Run `hermes setup` to configure your AI provider and API keys
 
 After installation, open **http://localhost:8787** in your browser.
 
@@ -27,7 +28,32 @@ After installation, open **http://localhost:8787** in your browser.
 
 - Docker with Docker Compose v2
 - Git
+- Python 3 (used by the installer to query GitHub releases)
 - ~5 GB of disk space
+
+## Version Pinning
+
+The installer automatically resolves the latest GitHub release for both projects at build time:
+
+- **Hermes Agent**: queries `NousResearch/hermes-agent` releases → uses the tag as the Docker image tag
+- **Hermes Web UI**: queries `nesquena/hermes-webui` releases → clones that tag during build
+
+If GitHub is unreachable, it falls back to `latest` (agent) and `master` (webui).
+
+### Manual override
+
+To pin specific versions, pass them as environment variables before building:
+
+```bash
+AGENT_TAG=v2026.5.7 WEBUI_BRANCH=v0.51.29 docker compose build
+docker compose up -d
+```
+
+Or pass them directly to the build command:
+
+```bash
+docker compose build --build-arg AGENT_TAG=v2026.4.30 --build-arg WEBUI_BRANCH=v0.50.96
+```
 
 ## Architecture
 

@@ -266,15 +266,59 @@ rm -f "$SCRIPT_DIR/docker-compose.yml.bak"
 
 ok "Configured docker-compose.yml (UID=${HOST_UID}, GID=${HOST_GID}, workspaces=${WORKSPACES_ROOT})"
 
-# ── 4) Build + Start ──
-printf "${BOLD}Step 3: Building and starting${NC}\n"
+# ── 4) Resolve latest releases ──
+printf "${BOLD}Step 3: Resolving latest versions${NC}\n"
+info "Querying GitHub for latest releases..."
+
+# Hermes Agent — latest release tag from Docker Hub (version-tagged images)
+AGENT_TAG=$(python3 -c "
+import urllib.request, json, sys
+try:
+    r = urllib.request.urlopen('https://api.github.com/repos/NousResearch/hermes-agent/releases/latest')
+    d = json.loads(r.read())
+    print(d['tag_name'])
+except Exception as e:
+    print('', file=sys.stderr)
+    sys.exit(1)
+" 2>/dev/null) || AGENT_TAG=""
+
+if [ -z "$AGENT_TAG" ]; then
+    warn "Could not fetch latest hermes-agent release. Falling back to 'latest'."
+    AGENT_TAG="latest"
+else
+    ok "Hermes Agent: $AGENT_TAG"
+fi
+
+# Hermes Web UI — latest release tag
+WEBUI_TAG=$(python3 -c "
+import urllib.request, json, sys
+try:
+    r = urllib.request.urlopen('https://api.github.com/repos/nesquena/hermes-webui/releases/latest')
+    d = json.loads(r.read())
+    print(d['tag_name'])
+except Exception as e:
+    print('', file=sys.stderr)
+    sys.exit(1)
+" 2>/dev/null) || WEBUI_TAG=""
+
+if [ -z "$WEBUI_TAG" ]; then
+    warn "Could not fetch latest hermes-webui release. Falling back to 'master'."
+    WEBUI_TAG="master"
+else
+    ok "Hermes Web UI: $WEBUI_TAG"
+fi
+
+echo ""
+
+# ── 5) Build + Start ──
+printf "${BOLD}Step 4: Building and starting${NC}\n"
 info "Building Docker image (this may take a few minutes on first run)..."
 cd "$SCRIPT_DIR"
 
-if ! $COMPOSE build 2>&1 | tail -5; then
+if ! $COMPOSE build --build-arg AGENT_TAG="$AGENT_TAG" --build-arg WEBUI_BRANCH="$WEBUI_TAG" 2>&1 | tail -5; then
     fatal "Docker build failed. Run '$COMPOSE build' for full output."
 fi
-ok "Image built"
+ok "Image built (agent=$AGENT_TAG, webui=$WEBUI_TAG)"
 
 info "Starting container..."
 if ! $COMPOSE up -d 2>&1; then
@@ -312,8 +356,8 @@ fi
 ok "Web UI is running"
 echo ""
 
-# ── 5) Hermes setup ──
-printf "${BOLD}Step 4: Hermes setup${NC}\n"
+# ── 6) Hermes setup ──
+printf "${BOLD}Step 5: Hermes setup${NC}\n"
 
 if [ "$EXISTING_DATA" = true ]; then
     info "Existing data detected. Setup may already be configured."
@@ -334,7 +378,7 @@ if [ "$RUN_SETUP" = true ]; then
     docker exec hermes-ui supervisorctl restart hermes-gateway 2>/dev/null || true
 fi
 
-# ── 6) Install hermes-container wrapper ──
+# ── 7) Install hermes-container wrapper ──
 # Lets the user run hermes CLI commands without typing the full
 # `docker exec -it -u hermes hermes-ui hermes ...` prefix every time.
 # Always runs as the `hermes` user inside the container so file ownership
