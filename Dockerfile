@@ -49,8 +49,8 @@ USER root
 
 ENV PATH="/opt/hermes/.venv/bin:${PATH}"
 
-# WebUI (8787) + Gateway API (8642)
-EXPOSE 8787 8642
+# WebUI (8787) + Gateway API (8642) + Hermes Dashboard (9119)
+EXPOSE 8787 8642 9119
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

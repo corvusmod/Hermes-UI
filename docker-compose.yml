@@ -11,6 +11,7 @@ services:
       - "8787:8787"   # Hermes Web UI
       - "8642:8642"   # Hermes Gateway API
       - "8085:8085"   # Gemini Oauth port
+      - "9119:9119"   # Hermes Dashboard
     volumes:
       # ── Data ──
       # All hermes data (config, sessions, memory, skills, credentials).
