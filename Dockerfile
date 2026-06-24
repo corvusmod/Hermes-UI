@@ -36,6 +36,9 @@ RUN git clone --depth 1 --branch ${WEBUI_BRANCH} ${WEBUI_REPO} ${WEBUI_INSTALL}
 RUN . /opt/hermes/.venv/bin/activate && \
     uv pip install --no-cache-dir -r ${WEBUI_INSTALL}/requirements.txt
 
+# ── Back to root for supervisord ──
+USER root
+
 # Holographic memory provider: NumPy is optional in upstream but required for
 # HRR algebra (probe, reason). Pre-install so the provider is fully functional
 # the moment a user runs `hermes memory setup` and selects "holographic".
@@ -43,9 +46,6 @@ RUN . /opt/hermes/.venv/bin/activate && \
 # bind-mounted /opt/data volume, so it persists across redeploys.
 RUN . /opt/hermes/.venv/bin/activate && \
     uv pip install --no-cache-dir numpy
-
-# ── Back to root for supervisord ──
-USER root
 
 ENV PATH="/opt/hermes/.venv/bin:${PATH}"
 
